@@ -1,6 +1,7 @@
 import uvicorn
 from fastapi import FastAPI, HTTPException, Depends, Security, status
 from fastapi.security import APIKeyHeader
+from fastapi.middleware.cors import CORSMiddleware  # <--- NEW IMPORT
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 import uuid
@@ -20,15 +21,22 @@ models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Agentic Honeypot API", version="1.0.0")
 
+# --- 🚨 NEW: CORS CONFIGURATION ---
+# This allows the Judge's testing website to talk to your API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows ALL origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
+
 # --- SECURITY CONFIGURATION ---
 API_KEY_NAME = "x-api-key"
-# Define your secret key here (or load from environment variable)
 EXPECTED_API_KEY = os.getenv("HONEYPOT_API_KEY", "team_agentic_secret_123")
-
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=True)
 
 async def get_api_key(api_key_header: str = Security(api_key_header)):
-    """Validates the API Key header"""
     if api_key_header != EXPECTED_API_KEY:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -42,12 +50,11 @@ async def get_api_key(api_key_header: str = Security(api_key_header)):
 def health_check():
     return {"status": "online", "system": "Agentic Honeypot v1"}
 
-# ADD SECURITY DEPENDENCY HERE 👇
 @app.post("/honeypot/engage", response_model=HoneypotResponse)
 async def engage_scammer(
     input_data: MessageInput, 
     db: Session = Depends(get_db),
-    api_key: str = Security(get_api_key) # <--- Locks this endpoint
+    api_key: str = Security(get_api_key)
 ):
     try:
         start_time = datetime.now(timezone.utc)
