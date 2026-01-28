@@ -1,0 +1,43 @@
+services:
+  # 1. FastAPI App
+  api:
+    build: .
+    container_name: honeypot_api
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    environment:
+      # Connects to the 'db' service defined below
+      - DATABASE_URL=postgresql://user:password@db:5432/honeypot_db
+    depends_on:
+      - db
+    restart: always
+
+  # 2. PostgreSQL Database
+  db:
+    image: postgres:15
+    container_name: honeypot_db
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: honeypot_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  # 3. pgAdmin (Dashboard for the Database)
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin_ui
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@honeypot.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:
