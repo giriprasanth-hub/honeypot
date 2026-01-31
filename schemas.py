@@ -1,24 +1,44 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict
+from pydantic import BaseModel, Field, model_validator
+from typing import List, Optional, Dict, Any
 
-# --- INPUT SCHEMA ---
-# This is what the Frontend or WhatsApp wrapper sends to us
+# --- INPUT SCHEMA (FLEXIBLE) ---
 class MessageInput(BaseModel):
-    message: str = Field(..., example="Your ICICI account is locked. Click here to verify.")
+    # We define multiple optional fields to catch whatever the Judge sends
+    message: Optional[str] = None
+    text: Optional[str] = None
+    content: Optional[str] = None
+    input: Optional[str] = None
+    
     sender_id: Optional[str] = "unknown"
 
-# --- OUTPUT SCHEMAS (The Intelligence Layer) ---
+    # This magic function runs BEFORE validation to normalize the input
+    @model_validator(mode='before')
+    @classmethod
+    def unify_input(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # Try to find the message in common field names
+            found_text = (
+                data.get('message') or 
+                data.get('text') or 
+                data.get('content') or 
+                data.get('input')
+            )
+            # Force it into the 'message' field so the rest of our code works
+            if found_text:
+                data['message'] = found_text
+        return data
 
+# --- OUTPUT SCHEMAS ---
 class ScamClassification(BaseModel):
     is_scam: bool
-    scam_type: str = Field(..., example="upi_phishing")
+    scam_type: str
     confidence: float
-    risk_level: str  # critical, high, medium, low
+    risk_level: str
 
 class IntelligenceData(BaseModel):
-    bank_accounts: List[Dict[str, float]] = Field(default_factory=list, description="Account numbers with confidence scores")
-    upi_ids: List[str] = Field(default_factory=list, description="Extracted UPI IDs")
-    phishing_links: List[str] = Field(default_factory=list, description="Malicious URLs found")
+    bank_accounts: List[str] = Field(default_factory=list)
+    upi_ids: List[str] = Field(default_factory=list)
+    phishing_links: List[str] = Field(default_factory=list)
     phone_numbers: List[str] = Field(default_factory=list)
 
 class EngagementMetrics(BaseModel):
@@ -29,8 +49,8 @@ class EngagementMetrics(BaseModel):
 class HoneypotResponse(BaseModel):
     honeypot_id: str
     timestamp_utc: str
-    input_message: str
+    input_message: Optional[str] = "No content"
     classification: ScamClassification
     intelligence: IntelligenceData
     engagement: EngagementMetrics
-    metadata: Dict[str, str] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict)
