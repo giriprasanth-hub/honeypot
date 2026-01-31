@@ -1,31 +1,41 @@
 from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Dict, Any
 
-# --- INPUT SCHEMA (FLEXIBLE) ---
+# --- INPUT SCHEMA (OMNIVOROUS) ---
 class MessageInput(BaseModel):
-    # We define multiple optional fields to catch whatever the Judge sends
-    message: Optional[str] = None
-    text: Optional[str] = None
-    content: Optional[str] = None
-    input: Optional[str] = None
-    
+    message: Optional[str] = ""
     sender_id: Optional[str] = "unknown"
 
-    # This magic function runs BEFORE validation to normalize the input
+    # This runs BEFORE validation to find the text anywhere
     @model_validator(mode='before')
     @classmethod
     def unify_input(cls, data: Any) -> Any:
         if isinstance(data, dict):
-            # Try to find the message in common field names
+            # 1. Try specific common keys first
             found_text = (
                 data.get('message') or 
                 data.get('text') or 
                 data.get('content') or 
-                data.get('input')
+                data.get('input') or 
+                data.get('prompt') or 
+                data.get('query') or 
+                data.get('msg') or 
+                data.get('body')
             )
-            # Force it into the 'message' field so the rest of our code works
+            
+            # 2. If not found, grab the FIRST string value we see in the dictionary
+            if not found_text:
+                for key, value in data.items():
+                    if isinstance(value, str) and len(value) > 5: # Assume scam is >5 chars
+                        found_text = value
+                        break
+            
+            # 3. Assign it to 'message' so the API works
             if found_text:
-                data['message'] = found_text
+                data['message'] = str(found_text)
+            else:
+                data['message'] = "" # Safety net to prevent NoneType crash
+                
         return data
 
 # --- OUTPUT SCHEMAS ---
