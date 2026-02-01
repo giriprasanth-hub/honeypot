@@ -49,6 +49,13 @@ async def get_api_key(api_key_header: str = Security(api_key_header)):
 @app.get("/")
 def health_check():
     return {"status": "online", "system": "Agentic Honeypot v1"}
+@app.get("/honeypot/engage")
+async def cron_ping():
+    return {
+        "status": "awake",
+        "message": "Cron job received. Server is active.",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
 
 @app.post("/honeypot/engage", response_model=HoneypotResponse)
 async def engage_scammer(
