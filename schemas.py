@@ -1,19 +1,15 @@
 from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Dict, Any
 
-# --- INPUT SCHEMA (Fixed to handle Strings & JSON) ---
+# --- INPUT SCHEMA (OMNIVOROUS) ---
 class MessageInput(BaseModel):
     message: Optional[str] = ""
     sender_id: Optional[str] = "unknown"
 
+    # This runs BEFORE validation to find the text anywhere
     @model_validator(mode='before')
     @classmethod
     def unify_input(cls, data: Any) -> Any:
-        # CASE 1: Input is just a raw string (e.g. plain text body)
-        if isinstance(data, str):
-            return {"message": data}
-            
-        # CASE 2: Input is a dictionary (JSON)
         if isinstance(data, dict):
             # 1. Try specific common keys first
             found_text = (
@@ -30,15 +26,15 @@ class MessageInput(BaseModel):
             # 2. If not found, grab the FIRST string value we see in the dictionary
             if not found_text:
                 for key, value in data.items():
-                    if isinstance(value, str) and len(value) > 1: 
+                    if isinstance(value, str) and len(value) > 5: # Assume scam is >5 chars
                         found_text = value
                         break
             
-            # 3. Assign it to 'message'
+            # 3. Assign it to 'message' so the API works
             if found_text:
                 data['message'] = str(found_text)
             else:
-                data['message'] = "" 
+                data['message'] = "" # Safety net to prevent NoneType crash
                 
         return data
 
