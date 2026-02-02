@@ -50,7 +50,6 @@ async def get_api_key(api_key_header: str = Security(api_key_header)):
 def health_check():
     return {"status": "online", "system": "Agentic Honeypot v1"}
 
-
 @app.post("/honeypot/engage", response_model=HoneypotResponse)
 async def engage_scammer(
     input_data: MessageInput, 
