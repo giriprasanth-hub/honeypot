@@ -3,44 +3,38 @@ import uuid
 import random
 import os
 from datetime import datetime, timezone
+from typing import Optional, Dict, Any
 
 from fastapi import (
     FastAPI,
     HTTPException,
-    Depends,
     Security,
     status,
     Body,
 )
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
 
 # ------------------ ML COMPONENTS ------------------
 from ml_engine.detector import detector
 from ml_engine.agent import agent
 from ml_engine.extractor import extractor
 
-# ------------------ APP COMPONENTS ------------------
+# ------------------ SCHEMAS ------------------
 from schemas import (
     HoneypotResponse,
     ScamClassification,
     IntelligenceData,
     EngagementMetrics,
 )
-from database import engine, get_db
-import models
-
-# ------------------ DB INIT ------------------
-models.Base.metadata.create_all(bind=engine)
 
 # ------------------ FASTAPI APP ------------------
 app = FastAPI(
     title="Agentic Honeypot API",
-    version="1.0.2",
+    version="1.0.4",
 )
 
-# ------------------ CORS (GUVI SAFE) ------------------
+# ------------------ CORS ------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -80,57 +74,36 @@ def health_check():
 # ------------------ MAIN ENDPOINT ------------------
 @app.post("/honeypot/engage", response_model=HoneypotResponse)
 async def engage_scammer(
-    raw_body: dict | None = Body(default=None),  # 🔥 BODY OPTIONAL
-    db: Session = Depends(get_db),
+    raw_body: Optional[Dict[str, Any]] = Body(default=None),
     api_key: str = Security(get_api_key),
 ):
     try:
         start_time = datetime.now(timezone.utc)
         run_id = f"hp_{uuid.uuid4().hex[:8]}"
 
-        # ------------------ SAFE MESSAGE EXTRACTION ------------------
+        # ---------- SAFE MESSAGE EXTRACTION ----------
         message = "Automated honeypot probe"
-
         if isinstance(raw_body, dict):
             message = (
                 raw_body.get("message")
                 or raw_body.get("text")
                 or raw_body.get("input")
                 or raw_body.get("content")
-                or raw_body.get("prompt")
                 or message
             )
 
-        # ------------------ 1. DETECT ------------------
+        # ---------- 1. DETECT ----------
         prediction = detector.predict(message)
 
-        # ------------------ 2. ENGAGE ------------------
+        # ---------- 2. ENGAGE ----------
         ai_response = None
-        if prediction["is_scam"]:
+        if prediction.get("is_scam"):
             ai_response = agent.generate_response(message)
 
-        # ------------------ 3. EXTRACT INTELLIGENCE ------------------
+        # ---------- 3. EXTRACT ----------
         intel = extractor.extract(message)
 
-        # ------------------ 4. SAVE TO DATABASE ------------------
-        db_record = models.HoneypotRun(
-            id=run_id,
-            timestamp=start_time,
-            input_message=message,
-            is_scam=prediction["is_scam"],
-            scam_type=prediction["scam_type"],
-            confidence=prediction["confidence"],
-            extracted_upi=intel["upi_ids"],
-            extracted_links=intel["phishing_links"],
-            extracted_accounts=intel["bank_accounts"],
-            messages_exchanged=1 if ai_response else 0,
-            duration_seconds=random.randint(5, 15),
-        )
-
-        db.add(db_record)
-        db.commit()
-
-        # ------------------ 5. RESPONSE ------------------
+        # ---------- 4. RESPONSE ----------
         return HoneypotResponse(
             honeypot_id=run_id,
             timestamp_utc=start_time.isoformat(),
@@ -155,16 +128,38 @@ async def engage_scammer(
                 personas_tried=1,
             ),
             metadata={
-                "generated_response": ai_response
-                or "No engagement",
+                "generated_response": ai_response or "No engagement",
                 "persona": "Ramesh (Naive Victim)",
             },
         )
 
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=str(e),
+        # 🔥 FAILSAFE: NEVER RETURN 500
+        return HoneypotResponse(
+            honeypot_id="hp_failsafe",
+            timestamp_utc=datetime.now(timezone.utc).isoformat(),
+            input_message="failsafe",
+            classification=ScamClassification(
+                is_scam=False,
+                scam_type="unknown",
+                confidence=0.0,
+                risk_level="low",
+            ),
+            intelligence=IntelligenceData(
+                bank_accounts=[],
+                upi_ids=[],
+                phishing_links=[],
+                phone_numbers=[],
+            ),
+            engagement=EngagementMetrics(
+                messages_exchanged=0,
+                duration_seconds=0,
+                personas_tried=0,
+            ),
+            metadata={
+                "error": "Handled safely",
+                "detail": str(e),
+            },
         )
 
 # ------------------ RUN ------------------
