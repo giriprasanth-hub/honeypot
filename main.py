@@ -1,20 +1,28 @@
 import uvicorn
-from fastapi import FastAPI, HTTPException, Depends, Security, status
-from fastapi.security import APIKeyHeader
-from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
-from datetime import datetime, timezone
 import uuid
 import random
 import os
+from datetime import datetime, timezone
 
-# Import ML Components
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Depends,
+    Security,
+    status,
+    Body,
+)
+from fastapi.security import APIKeyHeader
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
+
+# ------------------ ML COMPONENTS ------------------
 from ml_engine.detector import detector
 from ml_engine.agent import agent
 from ml_engine.extractor import extractor
 
+# ------------------ APP COMPONENTS ------------------
 from schemas import (
-    MessageInput,
     HoneypotResponse,
     ScamClassification,
     IntelligenceData,
@@ -23,12 +31,16 @@ from schemas import (
 from database import engine, get_db
 import models
 
-# Create tables
+# ------------------ DB INIT ------------------
 models.Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Agentic Honeypot API", version="1.0.1")
+# ------------------ FASTAPI APP ------------------
+app = FastAPI(
+    title="Agentic Honeypot API",
+    version="1.0.2",
+)
 
-# ------------------ CORS (Judge Friendly) ------------------
+# ------------------ CORS (GUVI SAFE) ------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -39,8 +51,15 @@ app.add_middleware(
 
 # ------------------ API KEY SECURITY ------------------
 API_KEY_NAME = "x-api-key"
-EXPECTED_API_KEY = os.getenv("HONEYPOT_API_KEY", "team_agentic_secret_123")
-api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=True)
+EXPECTED_API_KEY = os.getenv(
+    "HONEYPOT_API_KEY",
+    "team_agentic_secret_123"
+)
+
+api_key_header = APIKeyHeader(
+    name=API_KEY_NAME,
+    auto_error=True,
+)
 
 async def get_api_key(api_key: str = Security(api_key_header)):
     if api_key != EXPECTED_API_KEY:
@@ -53,12 +72,15 @@ async def get_api_key(api_key: str = Security(api_key_header)):
 # ------------------ HEALTH CHECK ------------------
 @app.get("/")
 def health_check():
-    return {"status": "online", "system": "Agentic Honeypot v1"}
+    return {
+        "status": "online",
+        "system": "Agentic Honeypot v1",
+    }
 
 # ------------------ MAIN ENDPOINT ------------------
 @app.post("/honeypot/engage", response_model=HoneypotResponse)
 async def engage_scammer(
-    input_data: MessageInput = MessageInput(),  # 🔥 BODY IS NOW OPTIONAL
+    raw_body: dict | None = Body(default=None),  # 🔥 BODY OPTIONAL
     db: Session = Depends(get_db),
     api_key: str = Security(get_api_key),
 ):
@@ -66,21 +88,31 @@ async def engage_scammer(
         start_time = datetime.now(timezone.utc)
         run_id = f"hp_{uuid.uuid4().hex[:8]}"
 
-        # Safety fallback
-        message = input_data.message or "Automated honeypot probe"
+        # ------------------ SAFE MESSAGE EXTRACTION ------------------
+        message = "Automated honeypot probe"
 
-        # 1. DETECT
+        if isinstance(raw_body, dict):
+            message = (
+                raw_body.get("message")
+                or raw_body.get("text")
+                or raw_body.get("input")
+                or raw_body.get("content")
+                or raw_body.get("prompt")
+                or message
+            )
+
+        # ------------------ 1. DETECT ------------------
         prediction = detector.predict(message)
 
-        # 2. ENGAGE
+        # ------------------ 2. ENGAGE ------------------
         ai_response = None
         if prediction["is_scam"]:
             ai_response = agent.generate_response(message)
 
-        # 3. EXTRACT INTEL
+        # ------------------ 3. EXTRACT INTELLIGENCE ------------------
         intel = extractor.extract(message)
 
-        # 4. SAVE TO DB
+        # ------------------ 4. SAVE TO DATABASE ------------------
         db_record = models.HoneypotRun(
             id=run_id,
             timestamp=start_time,
@@ -94,10 +126,11 @@ async def engage_scammer(
             messages_exchanged=1 if ai_response else 0,
             duration_seconds=random.randint(5, 15),
         )
+
         db.add(db_record)
         db.commit()
 
-        # 5. RESPONSE
+        # ------------------ 5. RESPONSE ------------------
         return HoneypotResponse(
             honeypot_id=run_id,
             timestamp_utc=start_time.isoformat(),
@@ -106,7 +139,9 @@ async def engage_scammer(
                 is_scam=prediction["is_scam"],
                 scam_type=prediction["scam_type"],
                 confidence=prediction["confidence"],
-                risk_level="critical" if prediction["is_scam"] else "low",
+                risk_level="critical"
+                if prediction["is_scam"]
+                else "low",
             ),
             intelligence=IntelligenceData(
                 bank_accounts=intel["bank_accounts"],
@@ -120,14 +155,22 @@ async def engage_scammer(
                 personas_tried=1,
             ),
             metadata={
-                "generated_response": ai_response or "No engagement",
+                "generated_response": ai_response
+                or "No engagement",
                 "persona": "Ramesh (Naive Victim)",
             },
         )
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=str(e),
+        )
 
-
+# ------------------ RUN ------------------
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+    )
