@@ -2,15 +2,15 @@ import uvicorn
 import uuid
 import random
 import os
+import json
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
 
 from fastapi import (
     FastAPI,
     HTTPException,
     Security,
     status,
-    Body,
+    Request,
 )
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,7 +31,7 @@ from schemas import (
 # ------------------ FASTAPI APP ------------------
 app = FastAPI(
     title="Agentic Honeypot API",
-    version="1.0.4",
+    version="1.0.5",
 )
 
 # ------------------ CORS ------------------
@@ -47,7 +47,7 @@ app.add_middleware(
 API_KEY_NAME = "x-api-key"
 EXPECTED_API_KEY = os.getenv(
     "HONEYPOT_API_KEY",
-    "team_agentic_secret_123"
+    "team_agentic_secret_123",
 )
 
 api_key_header = APIKeyHeader(
@@ -74,36 +74,44 @@ def health_check():
 # ------------------ MAIN ENDPOINT ------------------
 @app.post("/honeypot/engage", response_model=HoneypotResponse)
 async def engage_scammer(
-    raw_body: Optional[Dict[str, Any]] = Body(default=None),
+    request: Request,   # 🔥 NO BODY DECLARATION
     api_key: str = Security(get_api_key),
 ):
     try:
         start_time = datetime.now(timezone.utc)
         run_id = f"hp_{uuid.uuid4().hex[:8]}"
 
-        # ---------- SAFE MESSAGE EXTRACTION ----------
+        # ------------------ SAFE BODY READ ------------------
         message = "Automated honeypot probe"
-        if isinstance(raw_body, dict):
-            message = (
-                raw_body.get("message")
-                or raw_body.get("text")
-                or raw_body.get("input")
-                or raw_body.get("content")
-                or message
-            )
 
-        # ---------- 1. DETECT ----------
+        try:
+            body_bytes = await request.body()
+            if body_bytes:
+                body = json.loads(body_bytes.decode())
+                if isinstance(body, dict):
+                    message = (
+                        body.get("message")
+                        or body.get("text")
+                        or body.get("input")
+                        or body.get("content")
+                        or message
+                    )
+        except Exception:
+            # Ignore malformed / empty body
+            pass
+
+        # ------------------ DETECT ------------------
         prediction = detector.predict(message)
 
-        # ---------- 2. ENGAGE ----------
+        # ------------------ ENGAGE ------------------
         ai_response = None
         if prediction.get("is_scam"):
             ai_response = agent.generate_response(message)
 
-        # ---------- 3. EXTRACT ----------
+        # ------------------ EXTRACT ------------------
         intel = extractor.extract(message)
 
-        # ---------- 4. RESPONSE ----------
+        # ------------------ RESPONSE ------------------
         return HoneypotResponse(
             honeypot_id=run_id,
             timestamp_utc=start_time.isoformat(),
@@ -134,7 +142,7 @@ async def engage_scammer(
         )
 
     except Exception as e:
-        # 🔥 FAILSAFE: NEVER RETURN 500
+        # FAILSAFE — NEVER 500
         return HoneypotResponse(
             honeypot_id="hp_failsafe",
             timestamp_utc=datetime.now(timezone.utc).isoformat(),
@@ -157,7 +165,7 @@ async def engage_scammer(
                 personas_tried=0,
             ),
             metadata={
-                "error": "Handled safely",
+                "error": "Handled empty probe safely",
                 "detail": str(e),
             },
         )
