@@ -31,7 +31,7 @@ from schemas import (
 # ------------------ FASTAPI APP ------------------
 app = FastAPI(
     title="Agentic Honeypot API",
-    version="1.0.6",
+    version="1.0.7",
 )
 
 # ------------------ CORS ------------------
@@ -71,8 +71,8 @@ def health_check():
         "system": "Agentic Honeypot v1",
     }
 
-# ------------------ MAIN ENDPOINT ------------------
-@app.post("/honeypot/engage")   # 🔥 Removed response_model to avoid strict validation issues
+# ------------------ MAIN ENDPOINT (GET + POST) ------------------
+@app.api_route("/honeypot/engage", methods=["GET", "POST"])
 async def engage_scammer(
     request: Request,
     api_key: str = Security(get_api_key),
@@ -81,17 +81,14 @@ async def engage_scammer(
         start_time = datetime.now(timezone.utc)
         run_id = f"hp_{uuid.uuid4().hex[:8]}"
 
-        # ------------------ SAFE BODY READ ------------------
+        # ------------------ SAFE MESSAGE EXTRACTION ------------------
         message = "Automated honeypot probe"
 
         try:
             body_bytes = await request.body()
-
             if body_bytes:
-                # First try JSON
                 try:
                     body = json.loads(body_bytes.decode())
-
                     if isinstance(body, dict):
                         message = (
                             body.get("message")
@@ -101,16 +98,10 @@ async def engage_scammer(
                             or body.get("prompt")
                             or message
                         )
-                    elif isinstance(body, list):
-                        # If body is list, convert to string
-                        message = str(body)
-
                 except Exception:
-                    # If JSON parsing fails, treat body as plain text
+                    # If body is not JSON, treat as plain text
                     message = body_bytes.decode(errors="ignore").strip() or message
-
         except Exception:
-            # If request.body() itself fails
             pass
 
         # ------------------ DETECT ------------------
@@ -124,7 +115,7 @@ async def engage_scammer(
         # ------------------ EXTRACT ------------------
         intel = extractor.extract(message)
 
-        # ------------------ BUILD RESPONSE ------------------
+        # ------------------ RESPONSE OBJECT ------------------
         response_obj = HoneypotResponse(
             honeypot_id=run_id,
             timestamp_utc=start_time.isoformat(),
@@ -149,14 +140,15 @@ async def engage_scammer(
             metadata={
                 "generated_response": ai_response or "No engagement",
                 "persona": "Ramesh (Naive Victim)",
+                "http_method": request.method,
             },
         )
 
-        # Return JSON safely
+        # Always return plain JSON (no strict validation)
         return response_obj.model_dump()
 
     except Exception as e:
-        # ------------------ FAILSAFE RESPONSE (NEVER 500) ------------------
+        # ------------------ FAILSAFE (NEVER FAILS) ------------------
         return {
             "honeypot_id": "hp_failsafe",
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -165,23 +157,23 @@ async def engage_scammer(
                 "is_scam": False,
                 "scam_type": "unknown",
                 "confidence": 0.0,
-                "risk_level": "low"
+                "risk_level": "low",
             },
             "intelligence": {
                 "bank_accounts": [],
                 "upi_ids": [],
                 "phishing_links": [],
-                "phone_numbers": []
+                "phone_numbers": [],
             },
             "engagement": {
                 "messages_exchanged": 0,
                 "duration_seconds": 0,
-                "personas_tried": 0
+                "personas_tried": 0,
             },
             "metadata": {
                 "error": "Handled safely",
-                "detail": str(e)
-            }
+                "detail": str(e),
+            },
         }
 
 # ------------------ RUN ------------------
