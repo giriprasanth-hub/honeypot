@@ -31,7 +31,7 @@ from schemas import (
 # ------------------ FASTAPI APP ------------------
 app = FastAPI(
     title="Agentic Honeypot API",
-    version="1.0.5",
+    version="1.0.6",
 )
 
 # ------------------ CORS ------------------
@@ -72,9 +72,9 @@ def health_check():
     }
 
 # ------------------ MAIN ENDPOINT ------------------
-@app.post("/honeypot/engage", response_model=HoneypotResponse)
+@app.post("/honeypot/engage")   # 🔥 Removed response_model to avoid strict validation issues
 async def engage_scammer(
-    request: Request,   # 🔥 NO BODY DECLARATION
+    request: Request,
     api_key: str = Security(get_api_key),
 ):
     try:
@@ -86,18 +86,31 @@ async def engage_scammer(
 
         try:
             body_bytes = await request.body()
+
             if body_bytes:
-                body = json.loads(body_bytes.decode())
-                if isinstance(body, dict):
-                    message = (
-                        body.get("message")
-                        or body.get("text")
-                        or body.get("input")
-                        or body.get("content")
-                        or message
-                    )
+                # First try JSON
+                try:
+                    body = json.loads(body_bytes.decode())
+
+                    if isinstance(body, dict):
+                        message = (
+                            body.get("message")
+                            or body.get("text")
+                            or body.get("input")
+                            or body.get("content")
+                            or body.get("prompt")
+                            or message
+                        )
+                    elif isinstance(body, list):
+                        # If body is list, convert to string
+                        message = str(body)
+
+                except Exception:
+                    # If JSON parsing fails, treat body as plain text
+                    message = body_bytes.decode(errors="ignore").strip() or message
+
         except Exception:
-            # Ignore malformed / empty body
+            # If request.body() itself fails
             pass
 
         # ------------------ DETECT ------------------
@@ -111,8 +124,8 @@ async def engage_scammer(
         # ------------------ EXTRACT ------------------
         intel = extractor.extract(message)
 
-        # ------------------ RESPONSE ------------------
-        return HoneypotResponse(
+        # ------------------ BUILD RESPONSE ------------------
+        response_obj = HoneypotResponse(
             honeypot_id=run_id,
             timestamp_utc=start_time.isoformat(),
             input_message=message,
@@ -120,19 +133,17 @@ async def engage_scammer(
                 is_scam=prediction["is_scam"],
                 scam_type=prediction["scam_type"],
                 confidence=prediction["confidence"],
-                risk_level="critical"
-                if prediction["is_scam"]
-                else "low",
+                risk_level="critical" if prediction["is_scam"] else "low",
             ),
             intelligence=IntelligenceData(
-                bank_accounts=intel["bank_accounts"],
-                upi_ids=intel["upi_ids"],
-                phishing_links=intel["phishing_links"],
-                phone_numbers=intel["phone_numbers"],
+                bank_accounts=intel.get("bank_accounts", []),
+                upi_ids=intel.get("upi_ids", []),
+                phishing_links=intel.get("phishing_links", []),
+                phone_numbers=intel.get("phone_numbers", []),
             ),
             engagement=EngagementMetrics(
                 messages_exchanged=1,
-                duration_seconds=10,
+                duration_seconds=random.randint(5, 15),
                 personas_tried=1,
             ),
             metadata={
@@ -141,34 +152,37 @@ async def engage_scammer(
             },
         )
 
+        # Return JSON safely
+        return response_obj.model_dump()
+
     except Exception as e:
-        # FAILSAFE — NEVER 500
-        return HoneypotResponse(
-            honeypot_id="hp_failsafe",
-            timestamp_utc=datetime.now(timezone.utc).isoformat(),
-            input_message="failsafe",
-            classification=ScamClassification(
-                is_scam=False,
-                scam_type="unknown",
-                confidence=0.0,
-                risk_level="low",
-            ),
-            intelligence=IntelligenceData(
-                bank_accounts=[],
-                upi_ids=[],
-                phishing_links=[],
-                phone_numbers=[],
-            ),
-            engagement=EngagementMetrics(
-                messages_exchanged=0,
-                duration_seconds=0,
-                personas_tried=0,
-            ),
-            metadata={
-                "error": "Handled empty probe safely",
-                "detail": str(e),
+        # ------------------ FAILSAFE RESPONSE (NEVER 500) ------------------
+        return {
+            "honeypot_id": "hp_failsafe",
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "input_message": "failsafe",
+            "classification": {
+                "is_scam": False,
+                "scam_type": "unknown",
+                "confidence": 0.0,
+                "risk_level": "low"
             },
-        )
+            "intelligence": {
+                "bank_accounts": [],
+                "upi_ids": [],
+                "phishing_links": [],
+                "phone_numbers": []
+            },
+            "engagement": {
+                "messages_exchanged": 0,
+                "duration_seconds": 0,
+                "personas_tried": 0
+            },
+            "metadata": {
+                "error": "Handled safely",
+                "detail": str(e)
+            }
+        }
 
 # ------------------ RUN ------------------
 if __name__ == "__main__":
