@@ -6,36 +6,46 @@ class MessageInput(BaseModel):
     message: Optional[str] = ""
     sender_id: Optional[str] = "unknown"
 
-    # This runs BEFORE validation to find the text anywhere
     @model_validator(mode='before')
     @classmethod
     def unify_input(cls, data: Any) -> Any:
+        # Handle case where data is already a string
+        if isinstance(data, str):
+            return {"message": data}
+        
+        # Handle case where data is a list (take first string)
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, str) and len(item) > 0:
+                    return {"message": item}
+            return {"message": ""}
+        
+        # Handle dictionary case
         if isinstance(data, dict):
-            # 1. Try specific common keys first
-            found_text = (
-                data.get('message') or 
-                data.get('text') or 
-                data.get('content') or 
-                data.get('input') or 
-                data.get('prompt') or 
-                data.get('query') or 
-                data.get('msg') or 
-                data.get('body')
-            )
+            # First, check ALL string values (not just >5 chars)
+            found_text = None
+            for key in ['message', 'text', 'content', 'input', 'prompt', 'query', 'msg', 'body', 'payload']:
+                if key in data and isinstance(data[key], str) and data[key].strip():
+                    found_text = data[key]
+                    break
             
-            # 2. If not found, grab the FIRST string value we see in the dictionary
+            # If still not found, look for ANY string value
             if not found_text:
                 for key, value in data.items():
-                    if isinstance(value, str) and len(value) > 5: # Assume scam is >5 chars
+                    if isinstance(value, str) and value.strip():
                         found_text = value
                         break
             
-            # 3. Assign it to 'message' so the API works
+            # Assign to message field
             if found_text:
-                data['message'] = str(found_text)
+                data['message'] = found_text.strip()
             else:
-                data['message'] = "" # Safety net to prevent NoneType crash
-                
+                data['message'] = ""
+        
+        # Ensure sender_id exists
+        if isinstance(data, dict) and 'sender_id' not in data:
+            data['sender_id'] = "unknown"
+            
         return data
 
 # --- OUTPUT SCHEMAS ---
